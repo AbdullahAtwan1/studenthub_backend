@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from passlib.context import CryptContext
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, APIRouter
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import jwt
@@ -19,6 +19,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # OAuth2 scheme for Swagger (adds Authorize button)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+# Router used for endpoints in this module
+router = APIRouter()
+
 
 # ----------------------------------------------------
 # PASSWORD UTILITIES
@@ -34,17 +37,16 @@ def hash_password(password: str) -> str:
             detail="Password cannot be empty."
         )
 
+    # ✅ This line prevents the 72-byte error
     safe_password = password[:72]
     return pwd_context.hash(safe_password)
-
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verify if a plain text password matches the stored hashed password.
     """
-    safe_password = plain_password[:72]
+    safe_password = plain_password[:72]  # ✅ truncate for bcrypt safety
     return pwd_context.verify(safe_password, hashed_password)
-
 
 # ----------------------------------------------------
 # TOKEN UTILITIES
@@ -134,3 +136,15 @@ def get_current_user(
         )
 
     return user
+
+
+# ---------------------------------------------------
+# COUNT REGISTERED STUDENTS
+# ---------------------------------------------------
+@router.get("/count-students")
+async def count_students(db: Session = Depends(get_db)):
+    """
+    Return the total number of registered (verified) students.
+    """
+    count = db.query(User).filter(User.is_verified == True).count()
+    return {"total_students": count}
