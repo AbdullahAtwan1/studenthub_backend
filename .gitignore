@@ -1,0 +1,18 @@
+# Python cache and build files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
+# Virtual environment
+venv/
+
+# macOS system files
+.DS_Store
+
+# Local uploads (not needed on GitHub)
+uploads/
+
+# Environment variables
+.env
