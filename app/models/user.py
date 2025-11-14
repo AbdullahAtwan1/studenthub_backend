@@ -1,6 +1,16 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum
 from datetime import datetime
 from app.db.base_class import Base
+import enum
+
+
+class UserRole(str, enum.Enum):
+    student = "student"
+    club_admin = "club_admin"
+    council_member = "council_member"
+    council_head = "council_head"
+    developer = "developer"
+    system_admin = "system_admin"
 
 
 class User(Base):
@@ -16,7 +26,11 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # ✅ NEW FIELDS — required for auto-fetch from demo_students
+    # From demo_students
     college = Column(String(150), nullable=True)
     major = Column(String(150), nullable=True)
     minor = Column(String(150), nullable=True)
+
+    # NEW: role + club info
+    role = Column(Enum(UserRole), default=UserRole.student, nullable=False)
+    club_name = Column(String(150), nullable=True)

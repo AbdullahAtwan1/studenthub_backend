@@ -110,3 +110,22 @@ INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
 ('1209003', 'Anas Jarrar', 'Faculty of Business and Economics', 'Finance and Banking', NULL),
 ('1209004', 'Hind Shaheen', 'Faculty of Law and Public Administration', 'Law', NULL),
 ('1209005', 'Ola Jaber', 'Faculty of Arts', 'Translation', NULL);
+
+
+
+
+CREATE TABLE IF NOT EXISTS pending_signups (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  student_id VARCHAR(20) NOT NULL,
+  full_name VARCHAR(100) NOT NULL,
+  email VARCHAR(100) NOT NULL,
+  phone VARCHAR(20) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  student_id_image VARCHAR(255),
+  otp_code VARCHAR(6) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  is_used BOOLEAN NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ps_student_id (student_id),
+  INDEX idx_ps_email (email)
+);
