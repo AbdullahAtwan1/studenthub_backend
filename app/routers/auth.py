@@ -23,7 +23,7 @@ from app.core.security import (
 )
 from app.utils.email_sender import send_email
 from app.core.permissions import require_role
-
+from app.ai.verify_bzu_card import verify_bzu_card 
 router = APIRouter()
 
 UPLOAD_DIR = "uploads/student_ids"
@@ -50,6 +50,8 @@ async def signup(
     student_id_image: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
+    
+
     # 1) Clean old pending signups for same student/email
     db.query(PendingSignup).filter(PendingSignup.email == email).delete()
     db.query(PendingSignup).filter(PendingSignup.student_id == student_id).delete()
@@ -77,11 +79,21 @@ async def signup(
     full_name, college, major, minor = demo_student
 
     # 4) Save student_id image
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
     image_path = os.path.join(UPLOAD_DIR, f"{student_id}_{student_id_image.filename}")
     with open(image_path, "wb") as buffer:
         shutil.copyfileobj(student_id_image.file, buffer)
 
-    # 5) Create OTP + PendingSignup
+    print("\n📸 Uploaded card image saved at:", image_path)
+
+    # 5) Verify BZU card authenticity (logo + name + id) 🔍
+    verified, msg, face_path = verify_bzu_card(image_path, student_id, full_name)
+    print(f"🧠 Card verification result: {verified}, {msg}")
+
+    if not verified:
+        raise HTTPException(status_code=400, detail=f"Card verification failed: {msg}")
+
+    # 6) Create OTP + PendingSignup
     otp_code = generate_otp()
     pending = PendingSignup(
         student_id=student_id,
@@ -90,6 +102,7 @@ async def signup(
         phone=phone,
         password_hash=hash_password(password),
         student_id_image=image_path,
+        # student_face_image=face_path,  
         otp_code=otp_code,
         expires_at=datetime.utcnow() + timedelta(minutes=15),
         is_used=False,
@@ -98,7 +111,7 @@ async def signup(
     db.commit()
     db.refresh(pending)
 
-    # 6) Send OTP email
+    # 7) Send OTP email
     try:
         send_email(email, "StudentHub OTP Verification", f"Your verification code is: {otp_code}")
     except Exception:
@@ -116,6 +129,7 @@ async def signup(
             "minor": minor,
         },
     }
+
 
 
 # ---------------------------------------------------

@@ -1,3 +1,4 @@
+from app.ai.verify_bzu_card import verify_bzu_card
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, Form
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -5,6 +6,7 @@ from app.models.user import User
 from app.models.demo_student import DemoStudent   # ✅ NEW import
 from app.schemas.user_schemas import UserCreate, UserLogin, UserOut
 from app.security import hash_password, verify_password, create_access_token
+
 
 import shutil
 import os
@@ -41,6 +43,14 @@ async def signup(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(student_id_image.file, buffer)
 
+    # ============================
+    # 🔍 AI VERIFICATION SECTION
+    # ============================
+    verified, msg = verify_bzu_card(file_path, student_id, full_name)
+    if not verified:
+        os.remove(file_path)  # delete fake/wrong image
+        raise HTTPException(status_code=400, detail=f"Card verification failed: {msg}")
+
     # 🔹 Create user instance
     user = User(
         student_id=student_id,
@@ -51,7 +61,7 @@ async def signup(
         student_card_url=file_path
     )
 
-    # ✅ Auto assign college & major based on demo_students table
+    # Auto assign from demo
     demo = db.query(DemoStudent).filter_by(student_id=student_id).first()
     if demo:
         user.college = demo.college
