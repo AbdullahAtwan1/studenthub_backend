@@ -11,35 +11,34 @@ from sqlalchemy import text
 import shutil, os, random, string
 from datetime import datetime, timedelta
 
-from app.core.security import get_current_user
-from app.db.session import get_db
-from app.models.user import User, UserRole
-from app.models.otp import OTP, OtpPurpose
-from app.models.pending_signup import PendingSignup
 from app.core.security import (
     hash_password,
     verify_password,
     create_access_token,
+    get_current_user,
 )
+from app.db.session import get_db
+from app.models.user import User, UserRole
+from app.models.otp import OTP, OtpPurpose
+from app.models.pending_signup import PendingSignup
 from app.utils.email_sender import send_email
 from app.core.permissions import require_role
-from app.ai.verify_bzu_card import verify_bzu_card 
+from app.ai.verify_bzu_card import verify_bzu_card
+
 router = APIRouter()
 
-UPLOAD_DIR = "uploads/student_ids"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
+MEDIA_ROOT = "uploads/student_media"
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 # ---------------------------------------------------
-# Helper
+# Helper: OTP
 # ---------------------------------------------------
 def generate_otp() -> str:
-    """Generate a 6-digit numeric OTP."""
     return "".join(random.choices(string.digits, k=6))
 
 
 # ---------------------------------------------------
-# SIGN UP  (NO USER ROW UNTIL OTP VERIFIED)
+# SIGN UP (NO USER CREATED YET)
 # ---------------------------------------------------
 @router.post("/signup")
 async def signup(
@@ -50,74 +49,84 @@ async def signup(
     student_id_image: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    
-
-    # 1) Clean old pending signups for same student/email
-    db.query(PendingSignup).filter(PendingSignup.email == email).delete()
-    db.query(PendingSignup).filter(PendingSignup.student_id == student_id).delete()
+    # Remove old pending signups for same student/email
+    db.query(PendingSignup).filter(
+        (PendingSignup.email == email) | 
+        (PendingSignup.student_id == student_id)
+    ).delete()
     db.commit()
 
-    # Optional: clean expired general pending signups
-    db.query(PendingSignup).filter(PendingSignup.expires_at < datetime.utcnow()).delete()
+    # Cleanup expired pending signups
+    db.query(PendingSignup).filter(
+        PendingSignup.expires_at < datetime.utcnow()
+    ).delete()
     db.commit()
 
-    # 2) Prevent if already verified user exists
+    # Prevent duplicates with verified users
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
+
     if db.query(User).filter(User.student_id == student_id).first():
         raise HTTPException(status_code=400, detail="Student ID already registered")
 
-    # 3) Fetch from demo_students
-    demo_student = db.execute(
+    # Fetch from demo_students
+    demo = db.execute(
         text("SELECT full_name, college, major, minor FROM demo_students WHERE student_id = :sid"),
         {"sid": student_id}
     ).fetchone()
 
-    if not demo_student:
+    if not demo:
         raise HTTPException(status_code=404, detail="Student ID not found in demo records")
 
-    full_name, college, major, minor = demo_student
+    full_name, college, major, minor = demo
 
-    # 4) Save student_id image
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    image_path = os.path.join(UPLOAD_DIR, f"{student_id}_{student_id_image.filename}")
-    with open(image_path, "wb") as buffer:
+    # Create media folder
+    student_folder = os.path.join(MEDIA_ROOT, student_id)
+    os.makedirs(student_folder, exist_ok=True)
+
+    # Save card image
+    card_path = os.path.join(student_folder, "card.jpg")
+    with open(card_path, "wb") as buffer:
         shutil.copyfileobj(student_id_image.file, buffer)
 
-    print("\n📸 Uploaded card image saved at:", image_path)
+    print("📸 Saved card:", card_path)
 
-    # 5) Verify BZU card authenticity (logo + name + id) 🔍
-    verified, msg, face_path = verify_bzu_card(image_path, student_id, full_name)
-    print(f"🧠 Card verification result: {verified}, {msg}")
+    # AI Verification
+    verified, msg, face_path = verify_bzu_card(card_path, student_id, full_name)
+    print("🧠 Card verification:", verified, msg)
 
     if not verified:
         raise HTTPException(status_code=400, detail=f"Card verification failed: {msg}")
 
-    # 6) Create OTP + PendingSignup
-    otp_code = generate_otp()
+    # Create PendingSignup
+    otp = generate_otp()
     pending = PendingSignup(
         student_id=student_id,
         full_name=full_name,
         email=email,
         phone=phone,
         password_hash=hash_password(password),
-        student_id_image=image_path,
-        # student_face_image=face_path,  
-        otp_code=otp_code,
+
+        student_media_folder=student_folder,
+        student_card_path=card_path,
+        student_face_path=face_path,
+
+        otp_code=otp,
         expires_at=datetime.utcnow() + timedelta(minutes=15),
         is_used=False,
     )
+
     db.add(pending)
     db.commit()
     db.refresh(pending)
 
-    # 7) Send OTP email
+    # Send OTP
     try:
-        send_email(email, "StudentHub OTP Verification", f"Your verification code is: {otp_code}")
+        send_email(email, "StudentHub OTP Verification", f"Your verification code is: {otp}")
     except Exception:
         db.delete(pending)
         db.commit()
-        raise HTTPException(status_code=500, detail="Could not send OTP email.")
+        raise HTTPException(status_code=500, detail="Failed to send OTP email")
 
     return {
         "message": "OTP sent to email.",
@@ -127,119 +136,73 @@ async def signup(
             "college": college,
             "major": major,
             "minor": minor,
-        },
+        }
     }
 
 
-
 # ---------------------------------------------------
-# VERIFY OTP (SIGNUP) — creates the user NOW
+# VERIFY OTP → CREATE USER
 # ---------------------------------------------------
 @router.post("/verify-otp")
 async def verify_otp(
     otp_code: str = Form(...),
-    pending_id: int | None = Form(None),   # new flow (use this)
-    user_id: int | None = Form(None),      # legacy (kept if old app still uses it)
+    pending_id: int = Form(...),
     db: Session = Depends(get_db),
 ):
-    # New flow with pending_id
-    if pending_id is not None:
-        pending = db.query(PendingSignup).filter(PendingSignup.id == pending_id).first()
-        if not pending:
-            raise HTTPException(status_code=404, detail="Pending signup not found")
+    pending = db.query(PendingSignup).filter(PendingSignup.id == pending_id).first()
 
-        if pending.is_used or pending.expires_at < datetime.utcnow():
-            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending signup not found")
 
-        if pending.otp_code != otp_code:
-            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    if pending.is_used or pending.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
-        # Double-check uniqueness (in case something changed meanwhile)
-        if db.query(User).filter(User.email == pending.email).first():
-            raise HTTPException(status_code=400, detail="Email already registered")
-        if db.query(User).filter(User.student_id == pending.student_id).first():
-            raise HTTPException(status_code=400, detail="Student ID already registered")
+    if pending.otp_code != otp_code:
+        raise HTTPException(status_code=400, detail="Incorrect OTP")
 
-        # Create final user
-        new_user = User(
-            student_id=pending.student_id,
-            full_name=pending.full_name,
-            email=pending.email,
-            phone=pending.phone,
-            password=pending.password_hash,
-            student_id_image=pending.student_id_image,
-            is_verified=True,
-            role=UserRole.student,   # default role for signup
-            club_name=None,
-        )
+    # Ensure user does NOT already exist
+    if db.query(User).filter(User.email == pending.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
 
-        # Fill college, major, minor again from demo_students
-        demo_student = db.execute(
-            text("SELECT college, major, minor FROM demo_students WHERE student_id = :sid"),
-            {"sid": pending.student_id}
-        ).fetchone()
-        if demo_student:
-            new_user.college, new_user.major, new_user.minor = demo_student
+    if db.query(User).filter(User.student_id == pending.student_id).first():
+        raise HTTPException(status_code=400, detail="Student ID already registered")
 
-        db.add(new_user)
-        pending.is_used = True
-        db.commit()
-        db.refresh(new_user)
+    # Create final user
+    new_user = User(
+        student_id=pending.student_id,
+        full_name=pending.full_name,
+        email=pending.email,
+        phone=pending.phone,
+        password=pending.password_hash,
 
-        return {"message": "Account created & verified successfully!", "user_id": new_user.id}
+        student_media_folder=pending.student_media_folder,
+        student_card_path=pending.student_card_path,
+        student_face_path=pending.student_face_path,
 
-    # Legacy flow (if old mobile code still sends user_id)
-    if user_id is not None:
-        otp = (
-            db.query(OTP)
-            .filter(OTP.user_id == user_id, OTP.code == otp_code, OTP.purpose == OtpPurpose.signup)
-            .first()
-        )
-        if not otp or otp.expires_at < datetime.utcnow():
-            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+        is_verified=True,
+        role=UserRole.student,
+    )
 
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+    # Add academic info again
+    demo = db.execute(
+        text("SELECT college, major, minor FROM demo_students WHERE student_id = :sid"),
+        {"sid": pending.student_id}
+    ).fetchone()
 
-        user.is_verified = True
-        db.query(OTP).filter(OTP.user_id == user_id).delete()
-        db.commit()
-        return {"message": "Account verified successfully!"}
+    if demo:
+        new_user.college, new_user.major, new_user.minor = demo
 
-    raise HTTPException(status_code=400, detail="You must provide pending_id (new) or user_id (legacy).")
-
-
-# ---------------------------------------------------
-# RESEND OTP (legacy - kept for forgot_password)
-# ---------------------------------------------------
-@router.post("/resend-otp")
-async def resend_otp(
-    user_id: int = Form(...),
-    purpose: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    purpose = purpose.lower().strip()
-    if purpose not in ["signup", "forgot_password"]:
-        raise HTTPException(status_code=400, detail="Invalid purpose")
-
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    otp_code = generate_otp()
-    otp = OTP(user_id=user.id, code=otp_code, purpose=purpose)
-    db.add(otp)
+    db.add(new_user)
+    pending.is_used = True
     db.commit()
+    db.refresh(new_user)
 
-    try:
-        subject = "StudentHub OTP Verification"
-        body = f"Your StudentHub {purpose.replace('_', ' ')} OTP code is: {otp_code}"
-        send_email(user.email, subject, body)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to send OTP email")
-
-    return {"message": f"OTP resent successfully for {purpose}."}
+    return {
+        "message": "Account created successfully!",
+        "user_id": new_user.id,
+        "student_card_path": new_user.student_card_path,
+        "student_face_path": new_user.student_face_path,
+    }
 
 
 # ---------------------------------------------------
@@ -252,14 +215,18 @@ async def login(
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.student_id == student_id).first()
+
     if not user:
         raise HTTPException(status_code=404, detail="Student not found")
+
     if not user.is_verified:
         raise HTTPException(status_code=400, detail="Account not verified")
+
     if not verify_password(password, user.password):
         raise HTTPException(status_code=400, detail="Incorrect password")
 
     token = create_access_token({"sub": user.student_id}, timedelta(minutes=60))
+
     return {
         "message": "Login successful",
         "access_token": token,
@@ -273,37 +240,25 @@ async def login(
             "college": user.college,
             "major": user.major,
             "minor": user.minor,
-            "is_verified": user.is_verified,
-            "created_at": user.created_at,
             "role": user.role,
             "club_name": user.club_name,
-        },
+            "student_media_folder": user.student_media_folder,
+            "student_card_path": user.student_card_path,
+            "student_face_path": user.student_face_path,
+        }
     }
 
 
 # ---------------------------------------------------
-# GET CURRENT USER (/auth/me)
+# CURRENT USER
 # ---------------------------------------------------
 @router.get("/me")
 async def get_me(current_user: User = Depends(get_current_user)):
-    return {
-        "id": current_user.id,
-        "student_id": current_user.student_id,
-        "full_name": current_user.full_name,
-        "email": current_user.email,
-        "phone": current_user.phone,
-        "college": current_user.college,
-        "major": current_user.major,
-        "minor": current_user.minor,
-        "is_verified": current_user.is_verified,
-        "created_at": current_user.created_at,
-        "role": current_user.role,
-        "club_name": current_user.club_name,
-    }
+    return current_user
 
 
 # ---------------------------------------------------
-# FORGOT PASSWORD — uses EMAIL
+# FORGOT PASSWORD
 # ---------------------------------------------------
 @router.post("/forgot-password")
 async def forgot_password(
@@ -311,20 +266,18 @@ async def forgot_password(
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.email == email).first()
+
     if not user:
         raise HTTPException(status_code=404, detail="Email not found")
 
-    otp_code = generate_otp()
-    otp = OTP(user_id=user.id, code=otp_code, purpose=OtpPurpose.forgot_password)
-    db.add(otp)
+    otp = generate_otp()
+    record = OTP(user_id=user.id, code=otp, purpose=OtpPurpose.forgot_password)
+    db.add(record)
     db.commit()
 
-    try:
-        send_email(user.email, "StudentHub Password Reset", f"Your password reset OTP is: {otp_code}")
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not send password reset OTP.")
+    send_email(email, "StudentHub Password Reset", f"Your reset code: {otp}")
 
-    return {"message": "OTP sent for password reset", "user_id": user.id}
+    return {"message": "OTP sent", "user_id": user.id}
 
 
 # ---------------------------------------------------
@@ -336,21 +289,19 @@ async def verify_forgot_otp(
     otp_code: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    otp = (
-        db.query(OTP)
-        .filter(
-            OTP.user_id == user_id,
-            OTP.code == otp_code,
-            OTP.purpose == OtpPurpose.forgot_password,
-        )
-        .first()
-    )
+    otp = db.query(OTP).filter(
+        OTP.user_id == user_id,
+        OTP.code == otp_code,
+        OTP.purpose == OtpPurpose.forgot_password,
+    ).first()
+
     if not otp or otp.expires_at < datetime.utcnow():
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     db.query(OTP).filter(OTP.user_id == user_id).delete()
     db.commit()
-    return {"message": "OTP verified, you can now reset password"}
+
+    return {"message": "OTP verified"}
 
 
 # ---------------------------------------------------
@@ -367,25 +318,27 @@ async def reset_password(
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
     user = db.query(User).filter(User.id == user_id).first()
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     user.password = hash_password(new_password)
     db.commit()
-    return {"message": "Password reset successful"}
+
+    return {"message": "Password reset successfully"}
 
 
 # ---------------------------------------------------
-# COUNT VERIFIED STUDENTS
+# COUNT VERIFIED USERS
 # ---------------------------------------------------
 @router.get("/count-verified")
-async def count_verified_students(db: Session = Depends(get_db)):
-    verified_count = db.query(User).filter(User.is_verified == True).count()
-    return {"verified_students": verified_count}
+async def count_verified(db: Session = Depends(get_db)):
+    count = db.query(User).filter(User.is_verified == True).count()
+    return {"verified_students": count}
 
 
 # ---------------------------------------------------
-# ADMIN: SET USER ROLE (developer / council_head / club_admin / etc.)
+# ADMIN ROLE CHANGE
 # ---------------------------------------------------
 @router.post("/set-role")
 async def set_role(
@@ -394,22 +347,20 @@ async def set_role(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Only developer or system_admin can change roles
     require_role(current_user, [UserRole.developer, UserRole.system_admin])
 
     user = db.query(User).filter(User.id == target_user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Target user not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     user.role = role
     db.commit()
-    db.refresh(user)
 
-    return {"message": "Role updated successfully", "user_id": user.id, "new_role": user.role}
+    return {"message": "Role updated", "new_role": user.role}
 
 
 # ---------------------------------------------------
-# ADMIN: SET CLUB FOR USER (make them club_admin if needed)
+# ADMIN CLUB ASSIGN
 # ---------------------------------------------------
 @router.post("/set-club")
 async def set_club(
@@ -418,25 +369,18 @@ async def set_club(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Only developer or system_admin can assign clubs
     require_role(current_user, [UserRole.developer, UserRole.system_admin])
 
     user = db.query(User).filter(User.id == target_user_id).first()
+
     if not user:
-        raise HTTPException(status_code=404, detail="Target user not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     user.club_name = club_name
 
-    # If still a normal student, upgrade to club_admin
     if user.role == UserRole.student:
         user.role = UserRole.club_admin
 
     db.commit()
-    db.refresh(user)
 
-    return {
-        "message": "Club assigned successfully",
-        "user_id": user.id,
-        "role": user.role,
-        "club_name": user.club_name,
-    }
+    return {"message": "Club updated", "role": user.role}

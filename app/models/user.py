@@ -22,7 +22,7 @@ class User(Base):
     email = Column(String(100), unique=True, index=True, nullable=False)
     phone = Column(String(20), nullable=False)
     password = Column(String(255), nullable=False)
-    student_id_image = Column(String(255))
+
     is_verified = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -31,6 +31,11 @@ class User(Base):
     major = Column(String(150), nullable=True)
     minor = Column(String(150), nullable=True)
 
-    # NEW: role + club info
+    # NEW — media fields
+    student_media_folder = Column(String(255), nullable=True)
+    student_card_path = Column(String(255), nullable=True)
+    student_face_path = Column(String(255), nullable=True)
+
+    # Role
     role = Column(Enum(UserRole), default=UserRole.student, nullable=False)
     club_name = Column(String(150), nullable=True)

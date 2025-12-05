@@ -15,7 +15,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 # ---------------------------
-# ✅ SIGNUP
+# SIGNUP
 # ---------------------------
 @router.post("/signup", response_model=UserOut)
 async def signup(
@@ -27,21 +27,52 @@ async def signup(
     student_id_image: UploadFile = Form(...),
     db: Session = Depends(get_db)
 ):
-    # 🔹 Check if student already exists
-    existing_user = db.query(User).filter(User.student_id == student_id).first()
-    if existing_user:
+    # Check duplicates
+    if db.query(User).filter(User.student_id == student_id).first():
         raise HTTPException(status_code=400, detail="Student ID already registered")
 
-    existing_email = db.query(User).filter(User.email == email).first()
-    if existing_email:
+    if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # 🔹 Save student ID image
-    upload_dir = "app/uploads/student_cards"
+    # Save full card image
+    upload_dir = "uploads/student_cards"
     os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, student_id_image.filename)
-    with open(file_path, "wb") as buffer:
+    card_path = os.path.join(upload_dir, f"{student_id}.jpg")
+
+    with open(card_path, "wb") as buffer:
         shutil.copyfileobj(student_id_image.file, buffer)
+
+    # AI Verification
+    verified, msg, face_path = verify_bzu_card(card_path, student_id, full_name)
+
+    if not verified:
+        os.remove(card_path)
+        raise HTTPException(status_code=400, detail=f"Card verification failed: {msg}")
+
+    # Create user
+    user = User(
+        student_id=student_id,
+        full_name=full_name,
+        email=email,
+        phone=phone,
+        password=hash_password(password),
+        student_id_image=card_path,
+        student_face_image=face_path,
+        is_verified=True
+    )
+
+    # Auto assign major/college/minor
+    demo = db.query(DemoStudent).filter_by(student_id=student_id).first()
+    if demo:
+        user.college = demo.college
+        user.major = demo.major
+        user.minor = demo.minor
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return user
 
     # ============================
     # 🔍 AI VERIFICATION SECTION
@@ -100,6 +131,7 @@ async def login(data: UserLogin, db: Session = Depends(get_db)):
             "major": user.major,
             "minor": user.minor,
             "is_verified": user.is_verified,
-            "student_card_url": user.student_card_url
+            "student_card_url": user.student_id_image,
+            "student_face_url": user.student_face_image
         }
     }
