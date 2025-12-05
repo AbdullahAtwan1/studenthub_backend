@@ -57,7 +57,7 @@ INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
 INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
 ('1204001', 'Abdullah Atwan', 'Faculty of Information Technology', 'Computer Science', 'Artificial Intelligence'),
 ('1204002', 'Sama Kurdi', 'Faculty of Information Technology', 'Computer Information Systems', NULL),
-('1204003', 'Salah Awwad', 'Faculty of Information Technology', 'Data Science', NULL),
+('1200449', 'Salah Awwad', 'Faculty of Information Technology', 'Data Science', NULL),
 ('1204004', 'Lina Abu Awad', 'Faculty of Information Technology', 'Software Engineering', NULL),
 ('1204005', 'Ola Zboun', 'Faculty of Information Technology', 'Network Engineering', NULL);
 
@@ -128,4 +128,14 @@ CREATE TABLE IF NOT EXISTS pending_signups (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_ps_student_id (student_id),
   INDEX idx_ps_email (email)
+);
+
+
+
+CREATE TABLE IF NOT EXISTS home_slider (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    image_url VARCHAR(255) NOT NULL,
+    order_index INT NOT NULL DEFAULT 0,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

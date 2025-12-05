@@ -47,7 +47,7 @@ INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
 INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
 ('1203001', 'Yousef Daraghmeh', 'Faculty of Business and Economics', 'Accounting', NULL),
 ('1203002', 'Sara Khalil', 'Faculty of Business and Economics', 'Finance and Banking', NULL),
-('1203003', 'Ali Saleh', 'Faculty of Business and Economics', 'Marketing', 'E-Commerce'),
+('1200449', 'Ali Saleh', 'Faculty of Business and Economics', 'Marketing', 'E-Commerce'),
 ('1203004', 'Mariam Hamdan', 'Faculty of Business and Economics', 'Economics', NULL),
 ('1203005', 'Khaled Abu Rmeileh', 'Faculty of Business and Economics', 'Business Administration', NULL);
 
@@ -57,7 +57,7 @@ INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
 INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
 ('1204001', 'Abdullah Atwan', 'Faculty of Information Technology', 'Computer Science', 'Artificial Intelligence'),
 ('1204002', 'Sama Kurdi', 'Faculty of Information Technology', 'Computer Information Systems', NULL),
-('1204003', 'Salah Awwad', 'Faculty of Information Technology', 'Data Science', NULL),
+('1200449', 'Salah Awwad', 'Faculty of Information Technology', 'Data Science', NULL),
 ('1204004', 'Lina Abu Awad', 'Faculty of Information Technology', 'Software Engineering', NULL),
 ('1204005', 'Ola Zboun', 'Faculty of Information Technology', 'Network Engineering', NULL);
 
