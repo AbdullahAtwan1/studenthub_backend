@@ -11,6 +11,6 @@ class DemoStudent(Base):
     college = Column(String(150), nullable=True)
     major = Column(String(150), nullable=True)
     minor = Column(String(150), nullable=True)
-
+                                        
     def __repr__(self):
         return f"<DemoStudent(student_id={self.student_id}, college={self.college}, major={self.major})>"
