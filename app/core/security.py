@@ -3,7 +3,7 @@ from typing import Optional
 
 from passlib.context import CryptContext
 from fastapi import HTTPException, status, Depends, APIRouter
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 import jwt
 
@@ -16,11 +16,12 @@ from app.models.user import User
 # ----------------------------------------------------
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# OAuth2 scheme (for Swagger + Authorization header)
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# ✅ HTTP Bearer scheme (BEST for JWT, fixes Swagger issues)
+security = HTTPBearer()
 
 # Router used for endpoints in this module
 router = APIRouter()
+
 
 # ----------------------------------------------------
 # PASSWORD UTILITIES
@@ -47,13 +48,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     safe_password = plain_password[:72]
     return pwd_context.verify(safe_password, hashed_password)
 
+
 # ----------------------------------------------------
 # TOKEN UTILITIES
 # ----------------------------------------------------
-def create_access_token(
-    data: dict,
-    expires_delta: Optional[timedelta] = None
-) -> str:
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """
     Create a JWT access token with an expiration time.
     """
@@ -74,53 +73,62 @@ def create_access_token(
 def decode_access_token(token: str) -> dict:
     """
     Decode and verify a JWT access token.
-    This is the ONLY place where jwt.decode is used.
     """
+    try:
+        return jwt.decode(
+            token,
+            settings.JWT_SECRET,
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired."
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token."
+        )
+
+
+# ----------------------------------------------------
+# GET CURRENT USER  ✅ FIXED
+# ----------------------------------------------------
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Extract the current logged-in user based on JWT Bearer token.
+    """
+
+    token = credentials.credentials
+
     try:
         payload = jwt.decode(
             token,
             settings.JWT_SECRET,
             algorithms=[settings.JWT_ALGORITHM]
         )
-        return payload
+        student_id: str = payload.get("sub")
+        if not student_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication token."
+            )
 
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired.",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Token has expired."
         )
-
     except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token.",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Invalid token."
         )
 
-# ----------------------------------------------------
-# GET CURRENT USER  ✅ (FINAL FIX)
-# ----------------------------------------------------
-def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
-) -> User:
-    """
-    Extract the current logged-in user based on the JWT token.
-    """
-
-    # ✅ Decode token using ONE unified function
-    payload = decode_access_token(token)
-
-    student_id: str | None = payload.get("sub")
-    if student_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Retrieve the user from the database
     user = db.query(User).filter(User.student_id == student_id).first()
     if not user:
         raise HTTPException(
@@ -129,6 +137,7 @@ def get_current_user(
         )
 
     return user
+
 
 # ---------------------------------------------------
 # COUNT REGISTERED STUDENTS

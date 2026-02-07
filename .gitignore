@@ -1,18 +1,19 @@
-# Python cache and build files
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.db
-
-# Virtual environment
-venv/
-
-# macOS system files
+# OS
 .DS_Store
 
-# Local uploads (not needed on GitHub)
-uploads/
-
-# Environment variables
+# Environment
 .env
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editor
+.vscode/
+
+# Node / frontend
+node_modules/
+
+# Uploads (لو ما بدكم ترفعوها)
+uploads/
