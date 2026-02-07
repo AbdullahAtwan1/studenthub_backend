@@ -440,3 +440,29 @@ async def set_club(
         "role": user.role,
         "club_name": user.club_name,
     }
+# ===================================================
+# ✅ NEW: GET ALL USERS FOR CHAT (START NEW CONVERSATION)
+# ===================================================
+@router.get("/chat/users")
+async def get_chat_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns all users except the current logged-in user.
+    Used for starting a new chat.
+    """
+    users = (
+        db.query(User)
+        .filter(User.id != current_user.id)
+        .all()
+    )
+
+    return [
+        {
+            "id": user.id,
+            "full_name": user.full_name,
+            
+        }
+        for user in users
+    ]

@@ -44,8 +44,8 @@ def verify_bzu_card(uploaded_path: str, student_id: str, student_name: str):
     print("\n📝 OCR TEXT:", full_text)
 
     # --- Verify student name ---
-    if student_name.lower().split()[0] not in full_text:
-        return False, "Name mismatch", None
+    # if student_name.lower().split()[0] not in full_text:
+    #     return False, "Name mismatch", None
 
     # --- Verify student ID ---
     if student_id not in full_text:

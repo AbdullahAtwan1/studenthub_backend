@@ -16,12 +16,11 @@ from app.models.user import User
 # ----------------------------------------------------
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# OAuth2 scheme for Swagger (adds Authorize button)
+# OAuth2 scheme (for Swagger + Authorization header)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 # Router used for endpoints in this module
 router = APIRouter()
-
 
 # ----------------------------------------------------
 # PASSWORD UTILITIES
@@ -37,21 +36,24 @@ def hash_password(password: str) -> str:
             detail="Password cannot be empty."
         )
 
-    # ✅ This line prevents the 72-byte error
     safe_password = password[:72]
     return pwd_context.hash(safe_password)
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verify if a plain text password matches the stored hashed password.
     """
-    safe_password = plain_password[:72]  # ✅ truncate for bcrypt safety
+    safe_password = plain_password[:72]
     return pwd_context.verify(safe_password, hashed_password)
 
 # ----------------------------------------------------
 # TOKEN UTILITIES
 # ----------------------------------------------------
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    data: dict,
+    expires_delta: Optional[timedelta] = None
+) -> str:
     """
     Create a JWT access token with an expiration time.
     """
@@ -60,6 +62,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     to_encode.update({"exp": expire})
+
     encoded_jwt = jwt.encode(
         to_encode,
         settings.JWT_SECRET,
@@ -71,6 +74,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def decode_access_token(token: str) -> dict:
     """
     Decode and verify a JWT access token.
+    This is the ONLY place where jwt.decode is used.
     """
     try:
         payload = jwt.decode(
@@ -79,20 +83,23 @@ def decode_access_token(token: str) -> dict:
             algorithms=[settings.JWT_ALGORITHM]
         )
         return payload
+
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired."
+            detail="Token has expired.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+
     except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token."
+            detail="Invalid token.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-
 # ----------------------------------------------------
-# GET CURRENT USER  ✅ (needed for /auth/me)
+# GET CURRENT USER  ✅ (FINAL FIX)
 # ----------------------------------------------------
 def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -101,29 +108,15 @@ def get_current_user(
     """
     Extract the current logged-in user based on the JWT token.
     """
-    try:
-        payload = jwt.decode(
-            token,
-            settings.JWT_SECRET,
-            algorithms=[settings.JWT_ALGORITHM]
-        )
-        student_id: str = payload.get("sub")
-        if student_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    except jwt.ExpiredSignatureError:
+
+    # ✅ Decode token using ONE unified function
+    payload = decode_access_token(token)
+
+    student_id: str | None = payload.get("sub")
+    if student_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token.",
+            detail="Invalid authentication credentials.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -136,7 +129,6 @@ def get_current_user(
         )
 
     return user
-
 
 # ---------------------------------------------------
 # COUNT REGISTERED STUDENTS

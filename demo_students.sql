@@ -55,9 +55,9 @@ INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
 --  FACULTY OF INFORMATION TECHNOLOGY
 -- ==========================================================
 INSERT INTO demo_students (student_id, full_name, college, major, minor) VALUES
-('1204001', 'Abdullah Atwan', 'Faculty of Information Technology', 'Computer Science', 'Artificial Intelligence'),
+('1201997', 'Abdullah Atwan', 'Faculty of Information Technology', 'Computer Science', 'Artificial Intelligence'),
 ('1204002', 'Sama Kurdi', 'Faculty of Information Technology', 'Computer Information Systems', NULL),
-('1204003', 'Salah Awwad', 'Faculty of Information Technology', 'Data Science', NULL),
+('1200449', 'Salah Awwad', 'Faculty of Information Technology', 'Data Science', NULL),
 ('1204004', 'Lina Abu Awad', 'Faculty of Information Technology', 'Software Engineering', NULL),
 ('1204005', 'Ola Zboun', 'Faculty of Information Technology', 'Network Engineering', NULL);
 
