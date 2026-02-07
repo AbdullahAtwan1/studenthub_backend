@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from datetime import datetime, timedelta
-from app.db.base_class import Base
+from app.db.database import Base
 
 
 class PendingSignup(Base):
