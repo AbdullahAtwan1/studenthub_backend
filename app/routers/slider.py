@@ -15,12 +15,16 @@ from app.services.slider_service import (
     update_slider_item,
 )
 
+from app.core.security import get_current_user
+from app.core.permissions import require_role
+from app.models.user import User, UserRole
+
 router = APIRouter(
     prefix="/admin/slider",
     tags=["Admin Slider"],
 )
 
-UPLOAD_DIR = "uploads/slider"  # تأكد المجلد موجود
+UPLOAD_DIR = "uploads/slider"
 
 
 def ensure_upload_dir():
@@ -29,17 +33,16 @@ def ensure_upload_dir():
 
 
 # =========================
-#  Upload new slider image
+# Upload new slider image
 # =========================
-@router.post(
-    "/upload",
-    response_model=HomeSliderOut,
-)
+@router.post("/upload", response_model=HomeSliderOut)
 async def upload_slider_image(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    # current_admin = Depends(get_current_admin)  # تضيفها لاحقاً عندك
+    current_user: User = Depends(get_current_user),
 ):
+    require_role(current_user, [UserRole.system_admin, UserRole.developer])
+
     ensure_upload_dir()
 
     filename = file.filename
@@ -48,8 +51,7 @@ async def upload_slider_image(
     with open(file_path, "wb") as buffer:
         buffer.write(await file.read())
 
-    # لاحقاً نضبط URL مع static files
-    image_url = f"/static/slider/{filename}"
+    image_url = f"/uploads/slider/{filename}"
 
     slider_data = HomeSliderCreate(
         image_url=image_url,
@@ -62,63 +64,46 @@ async def upload_slider_image(
 
 
 # =========================
-#  List all slider items
+# List slider items
 # =========================
-@router.get(
-    "",
-    response_model=List[HomeSliderOut],
-)
+@router.get("", response_model=List[HomeSliderOut])
 def list_slider_items(
     db: Session = Depends(get_db),
-    # current_admin = Depends(get_current_admin)
+    current_user: User = Depends(get_current_user),
 ):
+    require_role(current_user, [UserRole.system_admin, UserRole.developer])
     return get_all_slider_items(db, only_active=False)
 
 
 # =========================
-#  Reorder all slider items
+# Reorder slider
 # =========================
 class ReorderBody(BaseModel):
     order: Dict[int, int]
 
 
-@router.put(
-    "/reorder-all",
-    response_model=List[HomeSliderOut],
-)
+@router.put("/reorder-all", response_model=List[HomeSliderOut])
 def reorder_slider(
     body: ReorderBody,
     db: Session = Depends(get_db),
-    # current_admin = Depends(get_current_admin)
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Example body:
-    {
-        "order": {
-            "1": 0,
-            "2": 1,
-            "3": 2
-        }
-    }
-    """
-    id_to_order = body.order
-    sliders = bulk_reorder_slider(db, id_to_order)
-    return sliders
+    require_role(current_user, [UserRole.system_admin, UserRole.developer])
+    return bulk_reorder_slider(db, body.order)
 
 
 # =========================
-#  Update single slider item
+# Update slider
 # =========================
-@router.put(
-    "/{slider_id}",
-    response_model=HomeSliderOut,
-)
+@router.put("/{slider_id}", response_model=HomeSliderOut)
 def update_slider(
     slider_id: int,
     data: HomeSliderUpdate,
     db: Session = Depends(get_db),
-    # current_admin = Depends(get_current_admin)
+    current_user: User = Depends(get_current_user),
 ):
+    require_role(current_user, [UserRole.system_admin, UserRole.developer])
+
     slider = update_slider_item(db, slider_id, data)
     if not slider:
         raise HTTPException(status_code=404, detail="Slider item not found")
@@ -126,14 +111,16 @@ def update_slider(
 
 
 # =========================
-#  Delete single slider item
+# Delete slider
 # =========================
 @router.delete("/{slider_id}")
 def delete_slider(
     slider_id: int,
     db: Session = Depends(get_db),
-    # current_admin = Depends(get_current_admin)
+    current_user: User = Depends(get_current_user),
 ):
+    require_role(current_user, [UserRole.system_admin, UserRole.developer])
+
     ok = delete_slider_item(db, slider_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Slider item not found")

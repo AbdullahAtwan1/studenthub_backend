@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.db.models_slider import HomeSlider
+from app.models.slider import HomeSlider
 from app.schemas.slider import HomeSliderCreate, HomeSliderUpdate
 
 

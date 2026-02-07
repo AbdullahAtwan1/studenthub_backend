@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Enum
 from datetime import datetime, timedelta
 import enum
-from app.db.base_class import Base
+from app.db.database import Base
 
 class OtpPurpose(str, enum.Enum):
     signup = "signup"
