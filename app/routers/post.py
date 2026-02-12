@@ -1,48 +1,34 @@
-from fastapi import APIRouter,UploadFile,File, Depends
+from fastapi import APIRouter, Depends, UploadFile, File
 from sqlalchemy.orm import Session
+from typing import List
+from app.db.session import get_db
 from app.models.post import Post
-from app.schemas.post import PostCreate
+from app.models.post_image import PostImage
 from app.dependencies import get_current_user
-import uuid
-import os
-from app.db.database import get_db
+import shutil, os
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
 @router.post("/")
 def create_post(
-    post: PostCreate,
+    content: str = None,
+    images: List[UploadFile] = File(None),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user)
+    user = Depends(get_current_user)
 ):
-    new_post = Post(
-        user_id=user.id,
-        content=post.content,
-        image=post.image
-    )
-    db.add(new_post)
+    post = Post(user_id=user.id, content=content)
+    db.add(post)
     db.commit()
-    db.refresh(new_post)
-    return new_post
+    db.refresh(post)
 
-@router.get("/my-posts")
-def get_my_posts(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user)
-):
-    return db.query(Post).filter(Post.user_id == user.id).all()
+    if images:
+        os.makedirs("uploads", exist_ok=True)
+        for img in images:
+            path = f"uploads/{img.filename}"
+            with open(path, "wb") as buffer:
+                shutil.copyfileobj(img.file, buffer)
+            db.add(PostImage(post_id=post.id, image_path=path))
 
-@router.post("/upload-image")
-def upload_post_image(file: UploadFile = File(...)):
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = f"uploads/posts/{filename}"
+        db.commit()
 
-    os.makedirs("uploads/posts", exist_ok=True)
-
-    with open(file_path, "wb") as buffer:
-        buffer.write(file.file.read())
-
-    return {
-        "image_url": f"/uploads/posts/{filename}"
-    }
-
+    return {"message": "Post created successfully"}

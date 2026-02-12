@@ -1,15 +1,14 @@
 from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime
+from typing import List, Optional
 
 class PostCreate(BaseModel):
     content: Optional[str] = None
-    image: Optional[str] = None
-
-class PostOut(PostCreate):
+class PostResponse(BaseModel):
     id: int
-    user_id: int
-    created_at: datetime
+    content: Optional[str]
+    images: List[str]
+    likes_count: int
+    comments_count: int
 
     class Config:
         from_attributes = True

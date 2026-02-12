@@ -1,26 +1,34 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.comment import Comment
-from app.schemas.comment import CommentCreate
 from app.dependencies import get_current_user
+import shutil, os
 
 router = APIRouter(prefix="/comments", tags=["Comments"])
 
 @router.post("/{post_id}")
 def add_comment(
     post_id: int,
-    comment: CommentCreate,
+    text: str = None,
+    image: UploadFile = File(None),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user)
+    user = Depends(get_current_user)
 ):
-    new_comment = Comment(
+    image_path = None
+    if image:
+        os.makedirs("uploads", exist_ok=True)
+        image_path = f"uploads/{image.filename}"
+        with open(image_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+    comment = Comment(
         user_id=user.id,
         post_id=post_id,
-        content=comment.content,
-        image=comment.image
+        text=text,
+        image=image_path
     )
-    db.add(new_comment)
+    db.add(comment)
     db.commit()
-    db.refresh(new_comment)
-    return new_comment
+
+    return {"message": "Comment added"}

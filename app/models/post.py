@@ -1,14 +1,16 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
-from sqlalchemy.sql import func
-from app.db.base_class import Base
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from app.db.session import Base
 
 class Post(Base):
     __tablename__ = "posts"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-
+    user_id = Column(Integer, ForeignKey("users.id"))
     content = Column(Text, nullable=True)
-    image = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    images = relationship("PostImage", back_populates="post", cascade="all, delete")
+    likes = relationship("Like", back_populates="post", cascade="all, delete")
+    comments = relationship("Comment", back_populates="post", cascade="all, delete")
