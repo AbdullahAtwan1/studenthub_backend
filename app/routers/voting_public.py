@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -10,11 +10,15 @@ from app.models.user import User
 from app.db.models import Poll, PollOption, PollVote
 from app.schemas.voting import (
     PollOut, PollDetailsOut, PollOptionOut,
-    VoteRequest, VoteManyRequest, ResultsOut
+    VoteManyRequest, ResultsOut
 )
 
 router = APIRouter(prefix="/polls", tags=["Public Voting"])
 
+
+# =====================================================
+# HELPERS
+# =====================================================
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -38,16 +42,27 @@ def sync_poll_status(db: Session, poll: Poll) -> Poll:
 
 def ensure_verified(user: User):
     if not user.is_verified:
-        raise HTTPException(status_code=403, detail="Voting is allowed only for verified students.")
+        raise HTTPException(
+            status_code=403,
+            detail="Voting is allowed only for verified students."
+        )
 
 
 def ensure_major_access(user: User, poll: Poll):
     if poll.poll_type == "MAJOR":
         if not poll.major:
             raise HTTPException(status_code=500, detail="Poll major is missing.")
-        if (user.major or "").strip() != (poll.major or "").strip():
-            raise HTTPException(status_code=403, detail="You are not allowed to vote in this major poll.")
 
+        if (user.major or "").strip() != (poll.major or "").strip():
+            raise HTTPException(
+                status_code=403,
+                detail="You are not allowed to vote in this major poll."
+            )
+
+
+# =====================================================
+# LIST ACTIVE POLLS
+# =====================================================
 
 @router.get("/active", response_model=List[PollOut])
 def list_active_polls(
@@ -56,17 +71,21 @@ def list_active_polls(
 ):
     ensure_verified(current_user)
 
-    polls = db.query(Poll).filter(Poll.status.in_(["ACTIVE", "CLOSED", "REVEALED"])).order_by(Poll.id.desc()).all()
+    polls = (
+        db.query(Poll)
+        .filter(Poll.status.in_(["ACTIVE", "CLOSED", "REVEALED"]))
+        .order_by(Poll.id.desc())
+        .all()
+    )
+
     visible: List[PollOut] = []
 
     for p in polls:
         p = sync_poll_status(db, p)
 
-        # only show polls that started
         if now_utc() < p.start_at:
             continue
 
-        # MAJOR polls: show only same major
         if p.poll_type == "MAJOR":
             if (current_user.major or "").strip() != (p.major or "").strip():
                 continue
@@ -76,9 +95,13 @@ def list_active_polls(
     return visible
 
 
-@router.get("/{poll_id}", response_model=PollDetailsOut)
+# =====================================================
+# GET POLL DETAILS
+# =====================================================
+
+@router.get("/poll", response_model=PollDetailsOut)
 def get_poll(
-    poll_id: int,
+    poll_id: int = Query(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -94,7 +117,12 @@ def get_poll(
     if now_utc() < poll.start_at:
         raise HTTPException(status_code=403, detail="Poll has not started yet")
 
-    options = db.query(PollOption).filter(PollOption.poll_id == poll_id).order_by(PollOption.id.asc()).all()
+    options = (
+        db.query(PollOption)
+        .filter(PollOption.poll_id == poll_id)
+        .order_by(PollOption.id.asc())
+        .all()
+    )
 
     return PollDetailsOut(
         **PollOut.model_validate(poll).model_dump(),
@@ -102,10 +130,14 @@ def get_poll(
     )
 
 
-@router.post("/{poll_id}/vote")
+# =====================================================
+# SINGLE VOTE (COUNCIL + MAJOR PRESIDENT/MEMBER)
+# =====================================================
+
+@router.post("/vote")
 def vote_single(
-    poll_id: int,
-    data: VoteRequest,
+    poll_id: int = Query(...),
+    option_id: int = Query(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -119,40 +151,53 @@ def vote_single(
     ensure_major_access(current_user, poll)
 
     n = now_utc()
+
     if poll.status != "ACTIVE":
         raise HTTPException(status_code=403, detail="Poll is not active")
+
     if n < poll.start_at:
         raise HTTPException(status_code=403, detail="Poll has not started yet")
+
     if n > poll.end_at:
         raise HTTPException(status_code=403, detail="Poll has ended")
 
-    option = db.query(PollOption).filter(PollOption.id == data.option_id, PollOption.poll_id == poll_id).first()
+    option = db.query(PollOption).filter(
+        PollOption.id == option_id,
+        PollOption.poll_id == poll_id
+    ).first()
+
     if not option:
         raise HTTPException(status_code=404, detail="Option not found")
 
-    # COUNCIL: exactly one vote total
+    # ================= COUNCIL =================
     if poll.poll_type == "COUNCIL":
+
         existing = db.query(PollVote).filter(
             PollVote.poll_id == poll_id,
             PollVote.student_id == current_user.student_id
         ).first()
+
         if existing:
             raise HTTPException(status_code=409, detail="You already voted in this poll")
 
         if option.option_type != "PARTY":
-            raise HTTPException(status_code=400, detail="Invalid option type for this poll")
+            raise HTTPException(status_code=400, detail="Invalid option type")
 
         db.add(PollVote(
             poll_id=poll_id,
             option_id=option.id,
             student_id=current_user.student_id
         ))
-        db.commit()
-        return {"message": "Vote submitted"}
 
-    # MAJOR: one PRESIDENT vote, multiple MEMBER votes (single endpoint for president if you want)
+        db.commit()
+        return {"message": "Vote submitted successfully"}
+
+    # ================= MAJOR =================
     if poll.poll_type == "MAJOR":
+
+        # PRESIDENT vote (only one allowed)
         if option.option_type == "PRESIDENT":
+
             existing_pres = (
                 db.query(PollVote)
                 .join(PollOption, PollVote.option_id == PollOption.id)
@@ -163,44 +208,59 @@ def vote_single(
                 )
                 .first()
             )
+
             if existing_pres:
-                raise HTTPException(status_code=409, detail="You already voted for president")
+                raise HTTPException(
+                    status_code=409,
+                    detail="You already voted for president"
+                )
 
             db.add(PollVote(
                 poll_id=poll_id,
                 option_id=option.id,
                 student_id=current_user.student_id
             ))
+
             db.commit()
             return {"message": "President vote submitted"}
 
+        # MEMBER vote (multiple allowed, no duplicates)
         if option.option_type == "MEMBER":
-            # allow multiple member votes, but prevent duplicate same option
+
             duplicate = db.query(PollVote).filter(
                 PollVote.poll_id == poll_id,
                 PollVote.student_id == current_user.student_id,
                 PollVote.option_id == option.id
             ).first()
+
             if duplicate:
-                raise HTTPException(status_code=409, detail="You already voted for this member")
+                raise HTTPException(
+                    status_code=409,
+                    detail="You already voted for this member"
+                )
 
             db.add(PollVote(
                 poll_id=poll_id,
                 option_id=option.id,
                 student_id=current_user.student_id
             ))
+
             db.commit()
             return {"message": "Member vote submitted"}
 
-        raise HTTPException(status_code=400, detail="Invalid option type for MAJOR poll")
+        raise HTTPException(status_code=400, detail="Invalid option type")
 
     raise HTTPException(status_code=400, detail="Invalid poll type")
 
 
-@router.post("/{poll_id}/vote-members")
+# =====================================================
+# VOTE MANY MEMBERS (MAJOR ONLY)
+# =====================================================
+
+@router.post("/vote-members")
 def vote_members_many(
-    poll_id: int,
     data: VoteManyRequest,
+    poll_id: int = Query(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -213,20 +273,15 @@ def vote_members_many(
     poll = sync_poll_status(db, poll)
     ensure_major_access(current_user, poll)
 
-    n = now_utc()
     if poll.poll_type != "MAJOR":
-        raise HTTPException(status_code=400, detail="This endpoint is only for MAJOR polls")
+        raise HTTPException(status_code=400, detail="Only MAJOR polls allowed")
+
     if poll.status != "ACTIVE":
         raise HTTPException(status_code=403, detail="Poll is not active")
-    if n < poll.start_at:
-        raise HTTPException(status_code=403, detail="Poll has not started yet")
-    if n > poll.end_at:
-        raise HTTPException(status_code=403, detail="Poll has ended")
 
     if not data.option_ids:
         raise HTTPException(status_code=400, detail="option_ids cannot be empty")
 
-    # fetch and validate all options
     options = db.query(PollOption).filter(
         PollOption.poll_id == poll_id,
         PollOption.id.in_(data.option_ids)
@@ -235,19 +290,18 @@ def vote_members_many(
     if len(options) != len(set(data.option_ids)):
         raise HTTPException(status_code=404, detail="One or more options not found")
 
-    # all must be MEMBER
+    inserted = 0
+
     for o in options:
         if o.option_type != "MEMBER":
             raise HTTPException(status_code=400, detail="All options must be MEMBER")
 
-    # insert votes, skipping duplicates
-    inserted = 0
-    for o in options:
         duplicate = db.query(PollVote).filter(
             PollVote.poll_id == poll_id,
             PollVote.student_id == current_user.student_id,
             PollVote.option_id == o.id
         ).first()
+
         if duplicate:
             continue
 
@@ -256,15 +310,24 @@ def vote_members_many(
             option_id=o.id,
             student_id=current_user.student_id
         ))
+
         inserted += 1
 
     db.commit()
-    return {"message": "Member votes submitted", "inserted": inserted}
+
+    return {
+        "message": "Member votes submitted",
+        "inserted": inserted
+    }
 
 
-@router.get("/{poll_id}/results", response_model=ResultsOut)
+# =====================================================
+# RESULTS
+# =====================================================
+
+@router.get("/results", response_model=ResultsOut)
 def public_results(
-    poll_id: int,
+    poll_id: int = Query(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -277,7 +340,6 @@ def public_results(
     poll = sync_poll_status(db, poll)
     ensure_major_access(current_user, poll)
 
-    # hide results until reveal time
     if now_utc() < poll.reveal_at:
         return ResultsOut(
             poll_id=poll.id,
@@ -286,8 +348,13 @@ def public_results(
             totals=None
         )
 
-    options = db.query(PollOption).filter(PollOption.poll_id == poll_id).all()
-    votes = db.query(PollVote).filter(PollVote.poll_id == poll_id).all()
+    options = db.query(PollOption).filter(
+        PollOption.poll_id == poll_id
+    ).all()
+
+    votes = db.query(PollVote).filter(
+        PollVote.poll_id == poll_id
+    ).all()
 
     counts: Dict[int, int] = {}
     for v in votes:
@@ -302,11 +369,15 @@ def public_results(
             "image_url": o.image_url,
             "votes": counts.get(o.id, 0),
         })
+
     items.sort(key=lambda x: x["votes"], reverse=True)
 
     return ResultsOut(
         poll_id=poll.id,
         is_revealed=True,
         status=poll.status,
-        totals={"items": items, "total_votes": len(votes)}
+        totals={
+            "items": items,
+            "total_votes": len(votes)
+        }
     )
